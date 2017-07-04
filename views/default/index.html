@@ -1,0 +1,32 @@
+{{extend 'layout.html'}}
+<div class="container">
+	<div class="col-md-2"></div>
+	<div class="col-md-8 info">
+		<p class="info">The <b>Branch &amp; Bound</b> algorithm is an algorithm for solving discrete optimization problems. This algorithm is implemented with <b>Python</b> using also the libraries <b>Pulp</b> (which is used for linear programming problems) and <b>Treelib</b> (which implements tree data stractures in python) and it can solve problems for educational purposes. <br> <a href="#">The code can be found on github</a>  </p>
+	</div>
+	<div class="col-md-2"></div>
+</div><br>
+
+<div class="container">
+	<div class="col-md-2"></div>
+	<div class="col-md-8 text-center">
+		<form action="{{=URL('params.html')}}">
+			<button type="submit" class="btn-lg btn-primary">Let's Begin</button>
+		</form>
+	</div>
+	<div class="col-md-2"></div>
+</div><br>
+
+<div class="container">
+	<div class="col-md-2"></div>
+	<div class="col-md-8 ">
+		<p class="info">The process is very simple and you just have to follow the screens. 
+		<ul>
+			<li>In the first screen you define the number of the variables and the number of the constraints</li>
+			<li>In the second sceen you define the problem type (min/max), the problem objective function and the constraints.  </li>
+			<li>In the last screen you get the tree with the path that we followed to find the solution</li>
+		</ul>
+		</p>
+	</div>
+	<div class="col-md-2"></div>
+</div>

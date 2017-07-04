@@ -1,0 +1,43 @@
+{{extend 'layout.html'}}
+<div class="container-fluid">
+	<form action="{{=URL('params.html')}}">
+		<button type="submit" class="btn btn-primary">Back to beginning</button>
+	</form>
+</div>
+<div class="container-fluid">
+  <h2>{{=T('Define problem')}}</h2>
+      <div class="form-inline">
+        {{=form.custom.begin}}
+        <div class="form-group">
+          <b>{{=form.custom.label['probtype']}}</b>
+          {{=form.custom.widget['probtype']}}
+        </div><br><br>
+        <div class="form-group">
+          <span><b>Z=</b></span>
+          {{for i in range(1, vars):}}
+          <span class="wrapper">{{=form.custom.widget['x_{var}'.format(var=i)]}}</span>
+          <b>{{=form.custom.label['x_{var}'.format(var=i)]}} </b>
+          {{pass}}
+        </div><br> <br>
+
+        {{for i in range(1, cos):}}
+        <div class="form-group">
+        <span><b>C_{{=i}}=</b></span>
+          {{for j in range(1,vars):}}
+              <span class="wrapper">{{=form.custom.widget['c_{co}x_{var}'.format(co=i,var=j)]}}</span>
+              <b>{{=form.custom.label['c_{co}x_{var}'.format(co=i,var=j)]}} </b>
+
+          {{pass}}
+          <span class="wrapper">{{=form.custom.widget['cotype_{co}'.format(co=i)]}}</span>
+          {{=form.custom.widget['b_{co}'.format(co=i)]}}<br><br>
+         </div><br>
+        {{pass}}
+
+      
+
+      <br><br>{{=form.custom.submit}}
+      {{=form.custom.end}}
+
+      </div>
+
+</div>

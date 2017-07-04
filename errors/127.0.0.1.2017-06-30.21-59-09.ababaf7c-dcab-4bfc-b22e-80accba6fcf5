@@ -1,0 +1,909 @@
+(dp1
+S'output'
+p2
+S"<type 'exceptions.AttributeError'> 'str' object has no attribute 'is_integer'"
+p3
+sS'layer'
+p4
+S'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\controllers/default.py'
+p5
+sS'code'
+p6
+S'    # -*- coding: utf-8 -*-\n# this file is released under public domain and you can use without limitations\n\n# -------------------------------------------------------------------------\n# This is a sample controller\n# - index is the default action of any application\n# - user is required for authentication and authorization\n# - download is for downloading files uploaded in the db (does streaming)\n# -------------------------------------------------------------------------\n\n\ndef index():\n    return dict()\n\ndef params():\n    form=SQLFORM.factory(\n        Field(\'vars\',label=T(\'Select number of variables\'),type=\'int\',requires=(IS_NOT_EMPTY(),IS_INT_IN_RANGE(2, 10,error_message=\'Input must be an integer between 2 and 10\'))),\n        Field(\'con\',label=T(\'Select number of constraints\'),type=\'int\',requires=(IS_NOT_EMPTY(),IS_INT_IN_RANGE(1, 10,error_message=\'Input must be an integer between 1 and 10\')))\n\n        )\n    if form.process(dbio=False).accepted:\n        variables=int(form.vars.vars)+1\n        constraints=int(form.vars.con)+1\n        redirect(URL(\'create_problem\',vars=dict(vars=variables,cons=constraints)))\n    return dict(form=form)\n\n\ndef create_problem():\n    import json\n    try:\n\n        variables=int(request.vars[\'vars\'])\n        constraints=int(request.vars[\'cons\'])\n              \n    except Exception as e:\n        redirect(URL(\'index\'))\n        return dict()\n\n    fields=[]\n    fields.append(Field(\'probtype\',label=T(\'Problem Type\'),requires=IS_IN_SET({\'LpMaximize\':\'Maximize\',\'LpMinimize\':\'Minimize\'},zero=None)))\n    varnames=[]\n    for i in range(1, variables):\n        fields.append(Field(\'x_{va}\'.format(va=i),label=\'x_{va}\'.format(va=i),requires=(IS_NOT_EMPTY(),IS_FLOAT_IN_RANGE(None, None,error_message=\'Input must be a decimal number\'))))\n    for i in range(1, constraints):\n        for j in range(1, variables):\n            fields.append(Field(\'c_{co}x_{va}\'.format(co=i,va=j),label=\'x_{va}\'.format(va=j),requires=(IS_NOT_EMPTY(),IS_FLOAT_IN_RANGE(None, None,error_message=\'Input must be a decimal number\'))))\n        fields.append(Field(\'cotype_{co}\'.format(co=i),requires=IS_IN_SET({\'<=\':\'\xe2\x89\xa4\',\'=\':\'=\',\'>=\':\'\xe2\x89\xa5\'},zero=None)))\n        fields.append(Field(\'b_{co}\'.format(co=i),requires=(IS_NOT_EMPTY(),IS_FLOAT_IN_RANGE(None, None,error_message=\'Input must be a decimal number\'))))\n    form=SQLFORM.factory(*fields,table_name=\'problem_variables\')\n    if form.process().accepted:\n            redirect(URL(\'solution\',vars=dict(problem=json.dumps(form.vars),variables=variables,constraints=constraints)))\n    return dict(form=form,vars=variables,cos=constraints)\n\ndef solution():\n    import json\n    from pulp import *\n    from treelib import Node, Tree\n    import math\n    import random\n    try:\n\n        variables=int(request.vars[\'variables\'])\n        constraints=int(request.vars[\'constraints\'])\n              \n    except Exception as e:\n        redirect(URL(\'index\'))\n        return dict()\n    problem=json.loads(request.vars[\'problem\'])    \n    if problem[\'probtype\']==\'LpMaximize\':\n        probtype=LpMaximize\n    else:\n        probtype=LpMinimize\n    # problem define\n    prob = LpProblem("Branch & Bound", probtype )\n    variableslist=[]\n    objective=\'\'\n    for i in range(1,variables):\n        variableslist.append(LpVariable(\'x_{no}\'.format(no=i),0)) #create the variables\n        objective+=variableslist[i-1]*problem[\'x_{var}\'.format(var=i)] #objective function define\n    prob+=objective, "obj" #final objective function\n    constraint=[]\n    #constraints declare\n    for i in range(1,constraints):\n        constraint=variableslist[0]*problem[\'c_{con}x_1\'.format(con=i)] \n        for j in range(2,variables):\n            constraint+=variableslist[j-1]*problem[\'c_{con}x_{var}\'.format(con=i,var=j)]\n        if problem[\'cotype_{con}\'.format(con=i)]==\'<=\':\n            prob+= constraint <= problem[\'b_{con}\'.format(con=i)]  \n        elif problem[\'cotype_{con}\'.format(con=i)]==\'>=\':\n            prob+= constraint >= problem[\'b_{con}\'.format(con=i)]\n        else:\n            prob+= constraint == problem[\'b_{con}\'.format(con=i)]\n    prob.solve()\n    if LpStatus[prob.status]!=\'Optimal\': #if solution is not optimal we are done. It is either "Not Solved" or "Infeasible" or "Unbounded" or "Undefined"\n        return dict(result=LpStatus[prob.status],example=\'none\',best_node=\'none\')\n    # We create the tree for the branch and bound\n    tree=Tree()\n    Result={} #result of the problem\n    Result[\'obj\']=value(prob.objective)\n    node_list=[] #list of node names\n    best_node={} #best node every time\n    best_node[\'node\']=\'none\'\n    best_node[\'limit\']=-float(\'inf\')\n    non_int_variables=[] #non int variables of current problem\n    solution=True\n    Result[\'vars\']={}\n    for v in prob.variables(): \n        Result[\'vars\'][v.name]=\'{var}={value}\'.format(var=v.name,value=v.varValue)\n        if not Result[\'vars\'][v.name].is_integer():\n            solution=False  # We find that there is a non-integer variable\n            non_int_variables.append(v.name)\n    if solution==True: # All variables in the solution are integers so we have the solution\n        best_node[\'node\']=\'original\'\n        best_node[\'limit\']=value(prob.objective)\n        best_node[\'result\']=Result\n    else:\n        node_list.append(\'original\')\n    tree.create_node(\'Original\',\'original\',data={\'status\':LpStatus[prob.status],\'problem\':prob,\'non_int\':non_int_variables,\'result\':Result}) # First node is the original problem\n    p=0\n    while node_list:\n        #for every node that we examine we create 2 new nodes based on the two new constraints that we insert each for a the new problem\n        solution=True\n        branch_node=node_list[0] # We select the last inserted node for branching. We use the FIFO method for selecting the node.\n        node_list.remove(branch_node) # And then we remove it from the nodes to be examined\n        non_integer_variables=tree.get_node(\'{node}\'.format(node=branch_node)).data[\'non_int\'] # we get the non_integer variables from the node\n        branch_variable=random.choice(non_integer_variables) # And then we randomly select which of them tou cut for branch and bound\n        down=int(tree.get_node(\'{node}\'.format(node=branch_node)).data[\'result\'][branch_variable])\n        up=math.ceil(tree.get_node(\'{node}\'.format(node=branch_node)).data[\'result\'][branch_variable])\n        temp=tree.get_node(\'{node}\'.format(node=branch_node)).data[\'problem\'].copy() # We take the node problem and we create the new one with the new constraint\n        var_index=int(branch_variable.split(\'_\')[1])-1\n        temp+=variableslist[var_index]<=down\n        new_constraint=\'{x}<={bs}\'.format(x=variableslist[var_index],bs=down)\n        temp.solve()\n        Result={}\n        non_int_variables=[]\n        if LpStatus[temp.status]==\'Optimal\':\n            Result[\'obj\']=value(temp.objective)\n            for v in temp.variables():\n                Result[\'vars\'][v.name]=\'{var}={value}\'.format(var=v.name,value=v.varValue)\n                if not Result[\'vars\'][v.name].is_integer():\n                    solution=False\n                    non_int_variables.append(v.name)\n            if solution==False:\n                if best_node[\'node\']==\'none\': #If we don\'t have a solution for now or....\n                    node_list.append(\'node{no}\'.format(no=p))\n                else:\n                    if problem[\'probtype\']==\'LpMaximize\': #If we already have a solution already we have to find if our current objective function solution is better than our limit\n                        if Result[\'obj\']>best_node[\'limit\']:\n                            node_list.append(\'node{no}\'.format(no=p))\n                    else:\n                        if Result[\'obj\']<best_node[\'limit\']:\n                            node_list.append(\'node{no}\'.format(no=p))\n            else: #in case that we have a solution we have to compare it with the limit\n                if problem[\'probtype\']==\'LpMaximize\':\n                    if Result[\'obj\']>best_node[\'limit\']:\n                            best_node[\'node\']=\'node{no}\'.format(no=p)\n                            best_node[\'limit\']=Result[\'obj\']\n                            best_node[\'result\']=Result\n                else:\n                    if Result[\'obj\']<best_node[\'limit\']:\n                        best_node[\'node\']=\'node{no}\'.format(no=p)\n                        best_node[\'limit\']=Result[\'obj\']\n                        best_node[\'result\']=Result\n            tree.create_node(\'node{no}\'.format(no=p),\'node{no}\'.format(no=p),parent=\'{node}\'.format(node=branch_node),data={\'status\':LpStatus[temp.status],\'problem\':temp,\'non_int\':non_int_variables,\'result\':Result,\'new_constraint\':new_constraint})\n        else:\n            tree.create_node(\'node{no}\'.format(no=p),\'node{no}\'.format(no=p),parent=\'{node}\'.format(node=branch_node),data={\'status\':LpStatus[temp.status],\'problem\':temp,\'non_int\':non_int_variables,\'result\':{\'obj\':LpStatus[temp.status]},\'new_constraint\':new_constraint})\n\n        p+=1\n        temp=tree.get_node(\'{node}\'.format(node=branch_node)).data[\'problem\'].copy()\n        temp+=variableslist[var_index]>=up\n        new_constraint=\'{x}>={bs}\'.format(x=variableslist[var_index],bs=up)\n        temp.solve()\n        Result={}\n        non_int_variables=[]\n        solution=True\n        if LpStatus[temp.status]==\'Optimal\':\n            Result[\'obj\']=value(temp.objective)\n            for v in temp.variables():\n                Result[\'vars\'][v.name]=\'{var}={value}\'.format(var=v.name,value=v.varValue)\n                if not Result[\'vars\'][v.name].is_integer():\n                    solution=False\n                    non_int_variables.append(v.name)\n            if solution==False:\n                if best_node[\'node\']==\'none\': #If we don\'t have a solution for now or....\n                    node_list.append(\'node{no}\'.format(no=p))\n                else:\n                    if problem[\'probtype\']==\'LpMaximize\': #If we already have a solution we already have to find if our current objective function solution is better than our limit\n                        if Result[\'obj\']>best_node[\'limit\']:\n                            node_list.append(\'node{no}\'.format(no=p))\n                    else:\n                        if Result[\'obj\']<best_node[\'limit\']:\n                            node_list.append(\'node{no}\'.format(no=p))\n            else: #in case that we have a solution we have to compare it with the limit\n                if problem[\'probtype\']==\'LpMaximize\':\n                    if Result[\'obj\']>best_node[\'limit\']:\n                            best_node[\'node\']=\'node{no}\'.format(no=p)\n                            best_node[\'limit\']=Result[\'obj\']\n                            best_node[\'result\']=Result\n                else:\n                    if Result[\'obj\']<best_node[\'limit\']:\n                        best_node[\'node\']=\'node{no}\'.format(no=p)\n                        best_node[\'limit\']=Result[\'obj\']\n                        best_node[\'result\']=Result\n            tree.create_node(\'node{no}\'.format(no=p),\'node{no}\'.format(no=p),parent=\'{node}\'.format(node=branch_node),data={\'status\':LpStatus[temp.status],\'problem\':temp,\'non_int\':non_int_variables,\'result\':Result,\'new_constraint\':new_constraint})\n        else:\n            tree.create_node(\'node{no}\'.format(no=p),\'node{no}\'.format(no=p),parent=\'{node}\'.format(node=branch_node),data={\'status\':LpStatus[temp.status],\'problem\':temp,\'non_int\':non_int_variables,\'result\':{\'obj\':LpStatus[temp.status]},\'new_constraint\':new_constraint})\n\n        p+=1\n    \n    for node in tree.all_nodes():\n        node.data.pop(\'problem\',None)\n        node.data.pop(\'non_int\',None)\n    tree_data=[]\n    node_list=tree.all_nodes()\n    for node in range(0,len(node_list)):\n        if not node_list[node].is_root():\n            if node_list[node].data[\'result\'][\'obj\'] == \'Infeasible\': \n                temp_list=[{\'v\':node_list[node].identifier,\'f\':\'<div style="font-size:0.8em">{new}</div>{obj}\'.format(new=node_list[node].data[\'new_constraint\'],obj=node_list[node].data[\'result\'][\'obj\'])},tree.parent(node_list[node].identifier).identifier,\'\']\n            else:\n                temp_list=[{\'v\':node_list[node].identifier,\'f\':\'<div style="font-size:0.8em">{new}</div>z={obj}<div style="color:red; font-style:italic">{vars}</div>\'.format(new=node_list[node].data[\'new_constraint\'],obj=node_list[node].data[\'result\'][\'obj\'], vars=node_list[node].data[\'result\'][\'vars\'])},tree.parent(node_list[node].identifier).identifier,\'\']\n\n        else:\n            temp_list=[{\'v\':node_list[node].identifier,\'f\':\'z={obj}<div style="color:red; font-style:italic">{vars}</div>\'.format(obj=node_list[node].data[\'result\'][\'obj\'],vars=node_list[node].data[\'result\'][\'vars\'])},\'\',\'\']\n        tree_data.append(temp_list)\n    \n    return dict(result=\'Feasible\',example=tree_data,best_node=best_node[\'node\'])\n\n\nresponse._vars=response._caller(solution)\n'
+p7
+sS'snapshot'
+p8
+(dp9
+S'exception'
+p10
+(dp11
+S'__hash__'
+p12
+S"<method-wrapper '__hash__' of exceptions.AttributeError object>"
+p13
+sS'__setattr__'
+p14
+S"<method-wrapper '__setattr__' of exceptions.AttributeError object>"
+p15
+sS'__reduce_ex__'
+p16
+S'<built-in method __reduce_ex__ of exceptions.AttributeError object>'
+p17
+sS'__getslice__'
+p18
+S"<method-wrapper '__getslice__' of exceptions.AttributeError object>"
+p19
+sS'__getitem__'
+p20
+S"<method-wrapper '__getitem__' of exceptions.AttributeError object>"
+p21
+sS'__setstate__'
+p22
+S'<built-in method __setstate__ of exceptions.AttributeError object>'
+p23
+sS'__reduce__'
+p24
+S'<built-in method __reduce__ of exceptions.AttributeError object>'
+p25
+sS'__str__'
+p26
+S"<method-wrapper '__str__' of exceptions.AttributeError object>"
+p27
+sS'__format__'
+p28
+S'<built-in method __format__ of exceptions.AttributeError object>'
+p29
+sS'__getattribute__'
+p30
+S"<method-wrapper '__getattribute__' of exceptions.AttributeError object>"
+p31
+sS'__class__'
+p32
+S"<type 'exceptions.AttributeError'>"
+p33
+sS'__unicode__'
+p34
+S'<built-in method __unicode__ of exceptions.AttributeError object>'
+p35
+sS'__delattr__'
+p36
+S"<method-wrapper '__delattr__' of exceptions.AttributeError object>"
+p37
+sS'__subclasshook__'
+p38
+S'<built-in method __subclasshook__ of type object>'
+p39
+sS'__repr__'
+p40
+S"<method-wrapper '__repr__' of exceptions.AttributeError object>"
+p41
+sS'args'
+p42
+S'("\'str\' object has no attribute \'is_integer\'",)'
+p43
+sS'__dict__'
+p44
+S'{}'
+p45
+sS'__sizeof__'
+p46
+S'<built-in method __sizeof__ of exceptions.AttributeError object>'
+p47
+sS'__doc__'
+p48
+S"'Attribute not found.'"
+p49
+sS'__init__'
+p50
+S"<method-wrapper '__init__' of exceptions.AttributeError object>"
+p51
+sS'__new__'
+p52
+S'<built-in method __new__ of type object>'
+p53
+ssS'evalue'
+p54
+S"'str' object has no attribute 'is_integer'"
+p55
+sS'request'
+p56
+cgluon.html
+XML_unpickle
+p57
+(S's\nf\x00\x00<div><table><tr><td style="font-weight:bold;vertical-align:top;">ajax</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">application</td><td style="vertical-align:top;">:</td><td><div>Project0</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">args</td><td style="vertical-align:top;">:</td><td><div><table></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">cid</td><td style="vertical-align:top;">:</td><td><div>None</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">client</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">controller</td><td style="vertical-align:top;">:</td><td><div>default</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">cookies</td><td style="vertical-align:top;">:</td><td><div><table><tr><td style="font-weight:bold;vertical-align:top;">session_id_admin</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1-0a0563c2-2cd6-41da-9fbf-fd452a9225eb<table><tr><td style="font-weight:bold;vertical-align:top;">comment</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">domain</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">expires</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">httponly</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">max-age</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">path</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">secure</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">version</td><td style="vertical-align:top;">:</td><td><div></div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_id_project0</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1-0b0488ee-4af9-4de1-9623-10e8dd0bb962<table><tr><td style="font-weight:bold;vertical-align:top;">comment</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">domain</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">expires</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">httponly</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">max-age</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">path</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">secure</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">version</td><td style="vertical-align:top;">:</td><td><div></div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_id_welcome</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1-0beee5e7-386c-4f6f-859f-577709ed1ee4<table><tr><td style="font-weight:bold;vertical-align:top;">comment</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">domain</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">expires</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">httponly</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">max-age</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">path</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">secure</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">version</td><td style="vertical-align:top;">:</td><td><div></div></td></tr></table></div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">env</td><td style="vertical-align:top;">:</td><td><div><table><tr><td style="font-weight:bold;vertical-align:top;">HTTP_ACCEPT</td><td style="vertical-align:top;">:</td><td><div>text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_ACCEPT_ENCODING</td><td style="vertical-align:top;">:</td><td><div>gzip, deflate, br</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_ACCEPT_LANGUAGE</td><td style="vertical-align:top;">:</td><td><div>el-GR,el;q=0.8,en;q=0.6</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_CACHE_CONTROL</td><td style="vertical-align:top;">:</td><td><div>max-age=0</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_CONNECTION</td><td style="vertical-align:top;">:</td><td><div>keep-alive</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_COOKIE</td><td style="vertical-align:top;">:</td><td><div>session_id_welcome=127.0.0.1-0beee5e7-386c-4f6f-859f-577709ed1ee4; session_id_project0=127.0.0.1-0b0488ee-4af9-4de1-9623-10e8dd0bb962; session_id_admin=127.0.0.1-0a0563c2-2cd6-41da-9fbf-fd452a9225eb</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_HOST</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1:8000</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_REFERER</td><td style="vertical-align:top;">:</td><td><div>http://127.0.0.1:8000/Project0/default/create_problem?cons=4&amp;vars=4</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_UPGRADE_INSECURE_REQUESTS</td><td style="vertical-align:top;">:</td><td><div>1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">HTTP_USER_AGENT</td><td style="vertical-align:top;">:</td><td><div>Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">PATH_INFO</td><td style="vertical-align:top;">:</td><td><div>/Project0/default/solution</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">QUERY_STRING</td><td style="vertical-align:top;">:</td><td><div>constraints=4&amp;problem=%7B%22c_1x_2%22%3A+-3.0%2C+%22c_1x_3%22%3A+1.0%2C+%22c_2x_1%22%3A+2.0%2C+%22c_1x_1%22%3A+4.0%2C+%22c_2x_2%22%3A+1.0%2C+%22c_2x_3%22%3A+-2.0%2C+%22cotype_3%22%3A+%22%3C%3D%22%2C+%22cotype_2%22%3A+%22%3C%3D%22%2C+%22cotype_1%22%3A+%22%3C%3D%22%2C+%22c_3x_1%22%3A+-3.0%2C+%22x_2%22%3A+27.0%2C+%22x_3%22%3A+23.0%2C+%22x_1%22%3A+19.0%2C+%22b_3%22%3A+5.0%2C+%22probtype%22%3A+%22LpMaximize%22%2C+%22b_2%22%3A+11.0%2C+%22c_3x_3%22%3A+2.0%2C+%22b_1%22%3A+7.0%2C+%22c_3x_2%22%3A+4.0%7D&amp;variables=4</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">REMOTE_ADDR</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">REMOTE_PORT</td><td style="vertical-align:top;">:</td><td><div>57256</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">REQUEST_METHOD</td><td style="vertical-align:top;">:</td><td><div>GET</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">SCRIPT_NAME</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">SERVER_NAME</td><td style="vertical-align:top;">:</td><td><div>Aristos-PC90</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">SERVER_PORT</td><td style="vertical-align:top;">:</td><td><div>8000</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">SERVER_PROTOCOL</td><td style="vertical-align:top;">:</td><td><div>HTTP/1.1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">SERVER_SOFTWARE</td><td style="vertical-align:top;">:</td><td><div>Rocket 1.2.6</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">app_folders</td><td style="vertical-align:top;">:</td><td><div>set([&#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py\\\\applications\\\\Project0\\\\&#x27;, &#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py\\\\applications\\\\admin\\\\&#x27;, &#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py\\\\applications\\\\welcome\\\\&#x27;])</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">applications_parent</td><td style="vertical-align:top;">:</td><td><div>C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">cmd_args</td><td style="vertical-align:top;">:</td><td><div><table></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">cmd_options</td><td style="vertical-align:top;">:</td><td><div>&lt;Values at 0x2dd4210: {&#x27;verbose&#x27;: False, &#x27;ip&#x27;: &#x27;127.0.0.1&#x27;, &#x27;debuglevel&#x27;: 30, &#x27;with_scheduler&#x27;: False, &#x27;shutdown_timeout&#x27;: 5, &#x27;taskbar&#x27;: False, &#x27;with_coverage&#x27;: False, &#x27;pid_filename&#x27;: &#x27;httpserver.pid&#x27;, &#x27;maxthreads&#x27;: None, &#x27;softcron&#x27;: False, &#x27;server_name&#x27;: &#x27;Aristos-PC90&#x27;, &#x27;bpython&#x27;: False, &#x27;nogui&#x27;: False, &#x27;port&#x27;: 8000, &#x27;print_errors&#x27;: False, &#x27;extcron&#x27;: False, &#x27;runcron&#x27;: False, &#x27;run_system_tests&#x27;: False, &#x27;test&#x27;: None, &#x27;folder&#x27;: &#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py&#x27;, &#x27;config&#x27;: &#x27;&#x27;, &#x27;minthreads&#x27;: None, &#x27;shell&#x27;: None, &#x27;run&#x27;: &#x27;&#x27;, &#x27;log_filename&#x27;: &#x27;httpserver.log&#x27;, &#x27;profiler_dir&#x27;: None, &#x27;args&#x27;: [&#x27;&#x27;], &#x27;socket_timeout&#x27;: 5, &#x27;ssl_ca_certificate&#x27;: None, &#x27;scheduler&#x27;: None, &#x27;interfaces&#x27;: None, &#x27;ssl_private_key&#x27;: &#x27;&#x27;, &#x27;gae&#x27;: None, &#x27;password&#x27;: &#x27;******&#x27;, &#x27;request_queue_size&#x27;: 5, &#x27;ssl_certificate&#x27;: &#x27;&#x27;, &#x27;cronjob&#x27;: False, &#x27;numthreads&#x27;: None, &#x27;quiet&#x27;: False, &#x27;import_models&#x27;: False, &#x27;timeout&#x27;: 10, &#x27;plain&#x27;: False, &#x27;nobanner&#x27;: False}&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">db_sessions</td><td style="vertical-align:top;">:</td><td><div>set([])</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">debugging</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">gluon_parent</td><td style="vertical-align:top;">:</td><td><div>C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_accept</td><td style="vertical-align:top;">:</td><td><div>text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_accept_encoding</td><td style="vertical-align:top;">:</td><td><div>gzip, deflate, br</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_accept_language</td><td style="vertical-align:top;">:</td><td><div>el-GR,el;q=0.8,en;q=0.6</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_cache_control</td><td style="vertical-align:top;">:</td><td><div>max-age=0</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_connection</td><td style="vertical-align:top;">:</td><td><div>keep-alive</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_cookie</td><td style="vertical-align:top;">:</td><td><div>session_id_welcome=127.0.0.1-0beee5e7-386c-4f6f-859f-577709ed1ee4; session_id_project0=127.0.0.1-0b0488ee-4af9-4de1-9623-10e8dd0bb962; session_id_admin=127.0.0.1-0a0563c2-2cd6-41da-9fbf-fd452a9225eb</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_host</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1:8000</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_referer</td><td style="vertical-align:top;">:</td><td><div>http://127.0.0.1:8000/Project0/default/create_problem?cons=4&amp;vars=4</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_upgrade_insecure_requests</td><td style="vertical-align:top;">:</td><td><div>1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">http_user_agent</td><td style="vertical-align:top;">:</td><td><div>Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_jython</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_pypy</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_source</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">local_hosts</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>Aristos-PC90.lan</div></td></tr><tr><td><div>fe80::2827:358d:d198:f240%14</div></td></tr><tr><td><div>Aristos-PC90</div></td></tr><tr><td><div>fe80::5163:8db0:407d:cbc7%12</div></td></tr><tr><td><div>::ffff:127.0.0.1</div></td></tr><tr><td><div>::1</div></td></tr><tr><td><div>192.168.10.9</div></td></tr><tr><td><div>2001:0:9d38:90d7:2827:358d:d198:f240</div></td></tr><tr><td><div>127.0.0.1</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">path_info</td><td style="vertical-align:top;">:</td><td><div>/Project0/default/solution</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">query_string</td><td style="vertical-align:top;">:</td><td><div>constraints=4&amp;problem=%7B%22c_1x_2%22%3A+-3.0%2C+%22c_1x_3%22%3A+1.0%2C+%22c_2x_1%22%3A+2.0%2C+%22c_1x_1%22%3A+4.0%2C+%22c_2x_2%22%3A+1.0%2C+%22c_2x_3%22%3A+-2.0%2C+%22cotype_3%22%3A+%22%3C%3D%22%2C+%22cotype_2%22%3A+%22%3C%3D%22%2C+%22cotype_1%22%3A+%22%3C%3D%22%2C+%22c_3x_1%22%3A+-3.0%2C+%22x_2%22%3A+27.0%2C+%22x_3%22%3A+23.0%2C+%22x_1%22%3A+19.0%2C+%22b_3%22%3A+5.0%2C+%22probtype%22%3A+%22LpMaximize%22%2C+%22b_2%22%3A+11.0%2C+%22c_3x_3%22%3A+2.0%2C+%22b_1%22%3A+7.0%2C+%22c_3x_2%22%3A+4.0%7D&amp;variables=4</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">remote_addr</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">remote_port</td><td style="vertical-align:top;">:</td><td><div>57256</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">request_method</td><td style="vertical-align:top;">:</td><td><div>GET</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">request_uri</td><td style="vertical-align:top;">:</td><td><div>/Project0/default/solution?constraints=4&amp;problem=%7B%22c_1x_2%22%3A+-3.0%2C+%22c_1x_3%22%3A+1.0%2C+%22c_2x_1%22%3A+2.0%2C+%22c_1x_1%22%3A+4.0%2C+%22c_2x_2%22%3A+1.0%2C+%22c_2x_3%22%3A+-2.0%2C+%22cotype_3%22%3A+%22%3C%3D%22%2C+%22cotype_2%22%3A+%22%3C%3D%22%2C+%22cotype_1%22%3A+%22%3C%3D%22%2C+%22c_3x_1%22%3A+-3.0%2C+%22x_2%22%3A+27.0%2C+%22x_3%22%3A+23.0%2C+%22x_1%22%3A+19.0%2C+%22b_3%22%3A+5.0%2C+%22probtype%22%3A+%22LpMaximize%22%2C+%22b_2%22%3A+11.0%2C+%22c_3x_3%22%3A+2.0%2C+%22b_1%22%3A+7.0%2C+%22c_3x_2%22%3A+4.0%7D&amp;variables=4</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">script_name</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">server_name</td><td style="vertical-align:top;">:</td><td><div>Aristos-PC90</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">server_port</td><td style="vertical-align:top;">:</td><td><div>8000</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">server_protocol</td><td style="vertical-align:top;">:</td><td><div>HTTP/1.1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">server_software</td><td style="vertical-align:top;">:</td><td><div>Rocket 1.2.6</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">web2py_path</td><td style="vertical-align:top;">:</td><td><div>C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">web2py_version</td><td style="vertical-align:top;">:</td><td><div>2.14.6-stable+timestamp.2016.05.10.00.21.47</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.errors</td><td style="vertical-align:top;">:</td><td><div>&lt;open file &#x27;&lt;stderr&gt;&#x27;, mode &#x27;w&#x27; at 0x002FD0D0&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.file_wrapper</td><td style="vertical-align:top;">:</td><td><div>&lt;class wsgiref.util.FileWrapper at 0x0376B148&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.input</td><td style="vertical-align:top;">:</td><td><div>&lt;socket._fileobject object at 0x01E8BB70&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.multiprocess</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.multithread</td><td style="vertical-align:top;">:</td><td><div>True</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.run_once</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.url_scheme</td><td style="vertical-align:top;">:</td><td><div>http</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi.version</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>1</div></td></tr><tr><td><div>0</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_errors</td><td style="vertical-align:top;">:</td><td><div>&lt;open file &#x27;&lt;stderr&gt;&#x27;, mode &#x27;w&#x27; at 0x002FD0D0&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_file_wrapper</td><td style="vertical-align:top;">:</td><td><div>&lt;class wsgiref.util.FileWrapper at 0x0376B148&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_input</td><td style="vertical-align:top;">:</td><td><div>&lt;socket._fileobject object at 0x01E8BB70&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_multiprocess</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_multithread</td><td style="vertical-align:top;">:</td><td><div>True</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_run_once</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_url_scheme</td><td style="vertical-align:top;">:</td><td><div>http</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi_version</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>1</div></td></tr><tr><td><div>0</div></td></tr></table></div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">extension</td><td style="vertical-align:top;">:</td><td><div>html</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">folder</td><td style="vertical-align:top;">:</td><td><div>C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">function</td><td style="vertical-align:top;">:</td><td><div>solution</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">global_settings</td><td style="vertical-align:top;">:</td><td><div><table><tr><td style="font-weight:bold;vertical-align:top;">app_folders</td><td style="vertical-align:top;">:</td><td><div>set([&#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py\\\\applications\\\\Project0\\\\&#x27;, &#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py\\\\applications\\\\admin\\\\&#x27;, &#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py\\\\applications\\\\welcome\\\\&#x27;])</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">applications_parent</td><td style="vertical-align:top;">:</td><td><div>C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">cmd_args</td><td style="vertical-align:top;">:</td><td><div><table></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">cmd_options</td><td style="vertical-align:top;">:</td><td><div>&lt;Values at 0x2dd4210: {&#x27;verbose&#x27;: False, &#x27;ip&#x27;: &#x27;127.0.0.1&#x27;, &#x27;debuglevel&#x27;: 30, &#x27;with_scheduler&#x27;: False, &#x27;shutdown_timeout&#x27;: 5, &#x27;taskbar&#x27;: False, &#x27;with_coverage&#x27;: False, &#x27;pid_filename&#x27;: &#x27;httpserver.pid&#x27;, &#x27;maxthreads&#x27;: None, &#x27;softcron&#x27;: False, &#x27;server_name&#x27;: &#x27;Aristos-PC90&#x27;, &#x27;bpython&#x27;: False, &#x27;nogui&#x27;: False, &#x27;port&#x27;: 8000, &#x27;print_errors&#x27;: False, &#x27;extcron&#x27;: False, &#x27;runcron&#x27;: False, &#x27;run_system_tests&#x27;: False, &#x27;test&#x27;: None, &#x27;folder&#x27;: &#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py&#x27;, &#x27;config&#x27;: &#x27;&#x27;, &#x27;minthreads&#x27;: None, &#x27;shell&#x27;: None, &#x27;run&#x27;: &#x27;&#x27;, &#x27;log_filename&#x27;: &#x27;httpserver.log&#x27;, &#x27;profiler_dir&#x27;: None, &#x27;args&#x27;: [&#x27;&#x27;], &#x27;socket_timeout&#x27;: 5, &#x27;ssl_ca_certificate&#x27;: None, &#x27;scheduler&#x27;: None, &#x27;interfaces&#x27;: None, &#x27;ssl_private_key&#x27;: &#x27;&#x27;, &#x27;gae&#x27;: None, &#x27;password&#x27;: &#x27;******&#x27;, &#x27;request_queue_size&#x27;: 5, &#x27;ssl_certificate&#x27;: &#x27;&#x27;, &#x27;cronjob&#x27;: False, &#x27;numthreads&#x27;: None, &#x27;quiet&#x27;: False, &#x27;import_models&#x27;: False, &#x27;timeout&#x27;: 10, &#x27;plain&#x27;: False, &#x27;nobanner&#x27;: False}&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">db_sessions</td><td style="vertical-align:top;">:</td><td><div>set([])</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">debugging</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">gluon_parent</td><td style="vertical-align:top;">:</td><td><div>C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_jython</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_pypy</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_source</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">local_hosts</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>Aristos-PC90.lan</div></td></tr><tr><td><div>fe80::2827:358d:d198:f240%14</div></td></tr><tr><td><div>Aristos-PC90</div></td></tr><tr><td><div>fe80::5163:8db0:407d:cbc7%12</div></td></tr><tr><td><div>::ffff:127.0.0.1</div></td></tr><tr><td><div>::1</div></td></tr><tr><td><div>192.168.10.9</div></td></tr><tr><td><div>2001:0:9d38:90d7:2827:358d:d198:f240</div></td></tr><tr><td><div>127.0.0.1</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">web2py_version</td><td style="vertical-align:top;">:</td><td><div>2.14.6-stable+timestamp.2016.05.10.00.21.47</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_https</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_local</td><td style="vertical-align:top;">:</td><td><div>True</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_restful</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_scheduler</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">is_shell</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">now</td><td style="vertical-align:top;">:</td><td><div>datetime.datetime(2017, 6, 30, 21, 59, 9, 117000)</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">raw_args</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">raw_extension</td><td style="vertical-align:top;">:</td><td><div>None</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">url</td><td style="vertical-align:top;">:</td><td><div>/Project0/default/solution</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">utcnow</td><td style="vertical-align:top;">:</td><td><div>datetime.datetime(2017, 6, 30, 18, 59, 9, 117000)</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">wsgi</td><td style="vertical-align:top;">:</td><td><div>&lt;gluon.main.LazyWSGI object at 0x08378930&gt;</div></td></tr></table></div>'
+tRp58
+sS'frames'
+p59
+(lp60
+(dp61
+S'file'
+p62
+S'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\gluon\\restricted.py'
+p63
+sS'dump'
+p64
+(dp65
+S'environment'
+p66
+S"{'A': <class 'gluon.html.A'>, 'ANY_OF': <class 'gluon.validators.ANY_OF'>, 'ASSIGNJS': <function ASSIGNJS>, 'AppConfig': <function AppConfig>, 'Auth': <class 'gluon.tools.Auth'>, 'B': <class 'gluon.html.B'>, 'BEAUTIFY': <class 'gluon.html.BEAUTIFY'>, 'BODY': <class 'gluon.html.BODY'>, 'BR': <class 'gluon.html.BR'>, 'BUTTON': <class 'gluon.html.BUTTON'>, ...}"
+p67
+sS'ccode'
+p68
+S'<code object <module> at 089B4140, file "C:\\User...ations\\Project0\\controllers/default.py", line 12>'
+p69
+ssS'lnum'
+p70
+I227
+sS'lines'
+p71
+(dp72
+I224
+S'            ccode = code'
+p73
+sI225
+S'        else:'
+p74
+sI226
+S'            ccode = compile2(code, layer)'
+p75
+sI227
+S'        exec ccode in environment'
+p76
+sI228
+S'    except HTTP:'
+p77
+sI229
+S'        raise'
+p78
+sI230
+S'    except RestrictedError:'
+p79
+sI231
+S'        # do not encapsulate (obfuscate) the original RestrictedError'
+p80
+sI222
+S'    try:'
+p81
+sI223
+S'        if isinstance(code, types.CodeType):'
+p82
+ssS'call'
+p83
+S'(code="    # -*- coding: utf-8 -*-\\n# this file is relea...e\'])\\n\\n\\nresponse._vars=response._caller(solution)\\n", environment={\'A\': <class \'gluon.html.A\'>, \'ANY_OF\': <class \'gluon.validators.ANY_OF\'>, \'ASSIGNJS\': <function ASSIGNJS>, \'AppConfig\': <function AppConfig>, \'Auth\': <class \'gluon.tools.Auth\'>, \'B\': <class \'gluon.html.B\'>, \'BEAUTIFY\': <class \'gluon.html.BEAUTIFY\'>, \'BODY\': <class \'gluon.html.BODY\'>, \'BR\': <class \'gluon.html.BR\'>, \'BUTTON\': <class \'gluon.html.BUTTON\'>, ...}, layer=r\'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\controllers/default.py\')'
+p84
+sS'func'
+p85
+S'restricted'
+p86
+sa(dp87
+g62
+S'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\controllers\\default.py'
+p88
+sg64
+(dp89
+sg70
+I229
+sg71
+(dp90
+I224
+S'        tree_data.append(temp_list)'
+p91
+sI225
+S''
+sI226
+S"    return dict(result='Feasible',example=tree_data,best_node=best_node['node'])"
+p92
+sI227
+S''
+sI218
+S'                temp_list=[{\'v\':node_list[node].identifier,\'f\':\'<div style="font-size:0.8em">{new}</div>{obj}\'.format(new=node_list[node].data[\'new_constraint\'],obj=node_list[node].data[\'result\'][\'obj\'])},tree.parent(node_list[node].identifier).identifier,\'\']'
+p93
+sI219
+S'            else:'
+p94
+sI220
+S'                temp_list=[{\'v\':node_list[node].identifier,\'f\':\'<div style="font-size:0.8em">{new}</div>z={obj}<div style="color:red; font-style:italic">{vars}</div>\'.format(new=node_list[node].data[\'new_constraint\'],obj=node_list[node].data[\'result\'][\'obj\'], vars=node_list[node].data[\'result\'][\'vars\'])},tree.parent(node_list[node].identifier).identifier,\'\']'
+p95
+sI221
+S''
+sI222
+S'        else:'
+p96
+sI223
+S'            temp_list=[{\'v\':node_list[node].identifier,\'f\':\'z={obj}<div style="color:red; font-style:italic">{vars}</div>\'.format(obj=node_list[node].data[\'result\'][\'obj\'],vars=node_list[node].data[\'result\'][\'vars\'])},\'\',\'\']'
+p97
+ssg83
+S'()'
+p98
+sg85
+S'<module>'
+p99
+sa(dp100
+g62
+S'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\gluon\\globals.py'
+p101
+sg64
+(dp102
+S'self'
+p103
+S'undefined'
+p104
+sS'f'
+S'<function solution>'
+p105
+ssg70
+I417
+sg71
+(dp106
+I416
+S'        self._vars = None'
+p107
+sI417
+S'        self._caller = lambda f: f()'
+p108
+sI418
+S'        self._view_environment = None'
+p109
+sI419
+S'        self._custom_commit = None'
+p110
+sI420
+S'        self._custom_rollback = None'
+p111
+sI421
+S"        self.generic_patterns = ['*']"
+p112
+sI412
+S"        self.flash = ''            # used by the default view layout"
+p113
+sI413
+S'        self.meta = Storage()      # used by web2py_ajax.html'
+p114
+sI414
+S'        self.menu = []             # used by the default view layout'
+p115
+sI415
+S'        self.files = []            # used by web2py_ajax.html'
+p116
+ssg83
+S'(f=<function solution>)'
+p117
+sg85
+S'<lambda>'
+p118
+sa(dp119
+g62
+S'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\controllers\\default.py'
+p120
+sg64
+(dp121
+S'prob.status'
+p122
+S'1'
+sS'LpStatus'
+p123
+S"{-3: 'Undefined', -2: 'Unbounded', -1: 'Infeasible', 0: 'Not Solved', 1: 'Optimal'}"
+p124
+sS'result'
+p125
+g104
+sS'builtindict'
+p126
+S"<type 'dict'>"
+p127
+sS'prob'
+p128
+S'Branch & Bound:\nMAXIMIZE\n19.0*x_1 + 27.0*x_2 + 2...LES\nx_1 Continuous\nx_2 Continuous\nx_3 Continuous\n'
+p129
+ssg70
+I109
+sg71
+(dp130
+I104
+S'    non_int_variables=[] #non int variables of current problem'
+p131
+sI105
+S'    solution=True'
+p132
+sI106
+S"    Result['vars']={}"
+p133
+sI107
+S'    for v in prob.variables():'
+p134
+sI108
+S"        Result['vars'][v.name]='{var}={value}'.format(var=v.name,value=v.varValue)"
+p135
+sI109
+S"        if not Result['vars'][v.name].is_integer():"
+p136
+sI110
+S'            solution=False  # We find that there is a non-integer variable'
+p137
+sI111
+S'            non_int_variables.append(v.name)'
+p138
+sI112
+S'    if solution==True: # All variables in the solution are integers so we have the solution'
+p139
+sI113
+S"        best_node['node']='original'"
+p140
+ssg83
+S'()'
+p141
+sg85
+S'solution'
+p142
+sasS'pyver'
+p143
+S'Python 2.7.9: C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\web2py.exe (prefix: C:\\Python27)'
+p144
+sS'session'
+p145
+g57
+(S's\x1a\x00\x00\x00<div><table></table></div>'
+tRp146
+sS'etype'
+p147
+S"<type 'exceptions.AttributeError'>"
+p148
+sS'date'
+p149
+S'Fri Jun 30 21:59:09 2017'
+p150
+sS'response'
+p151
+g57
+(S's\xa5?\x00\x00<div><table><tr><td style="font-weight:bold;vertical-align:top;">body</td><td style="vertical-align:top;">:</td><td><div>&lt;cStringIO.StringO object at 0x04093A00&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">cookies</td><td style="vertical-align:top;">:</td><td><div><table><tr><td style="font-weight:bold;vertical-align:top;">session_id_project0</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1-0b0488ee-4af9-4de1-9623-10e8dd0bb962<table><tr><td style="font-weight:bold;vertical-align:top;">comment</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">domain</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">expires</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">httponly</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">max-age</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">path</td><td style="vertical-align:top;">:</td><td><div>/</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">secure</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">version</td><td style="vertical-align:top;">:</td><td><div></div></td></tr></table></div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">delimiters</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>{{</div></td></tr><tr><td><div>}}</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">files</td><td style="vertical-align:top;">:</td><td><div><table></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">flash</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">form_label_separator</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">formstyle</td><td style="vertical-align:top;">:</td><td><div>bootstrap3_inline</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">generic_patterns</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>*</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">google_analytics_id</td><td style="vertical-align:top;">:</td><td><div>None</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">headers</td><td style="vertical-align:top;">:</td><td><div><table><tr><td style="font-weight:bold;vertical-align:top;">X-Powered-By</td><td style="vertical-align:top;">:</td><td><div>web2py</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">logo</td><td style="vertical-align:top;">:</td><td><div><a class="navbar-brand" href="http://www.web2py.com/" id="web2py-logo"><b>web<span>2</span>py</b>&trade;&nbsp;</a></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">menu</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div><table><tr><td><div>Home</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/Project0/default/index</div></td></tr><tr><td><div><table></table></div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>My Sites</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/site</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>This App</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>#</div></td></tr><tr><td><div><table><tr><td><div><table><tr><td><div>Design</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/design/Project0</div></td></tr></table></div></td></tr><tr><td><div><li class="divider"></li></div></td></tr><tr><td><div><table><tr><td><div>Controller</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/edit/Project0/controllers/default.py</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>View</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/edit/Project0/views/default/solution.html</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>DB Model</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/edit/Project0/models/db.py</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Menu Model</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/edit/Project0/models/menu.py</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Config.ini</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/edit/Project0/private/appconfig.ini</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Layout</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/edit/Project0/views/layout.html</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Stylesheet</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/edit/Project0/static/css/web2py-bootstrap3.css</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Database</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/Project0/appadmin/index</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Errors</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/errors/Project0</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>About</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>/admin/default/about/Project0</div></td></tr></table></div></td></tr></table></div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>web2py.com</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>#</div></td></tr><tr><td><div><table><tr><td><div><table><tr><td><div>Download</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/examples/default/download</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Support</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/examples/default/support</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Demo</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://web2py.com/demo_admin</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Quick Examples</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://web2py.com/examples/default/examples</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>FAQ</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://web2py.com/AlterEgo</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Videos</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/examples/default/videos/</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Free Applications</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://web2py.com/appliances</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Plugins</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://web2py.com/plugins</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Recipes</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://web2pyslices.com/</div></td></tr></table></div></td></tr></table></div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Documentation</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>#</div></td></tr><tr><td><div><table><tr><td><div><table><tr><td><div>Online book</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book</div></td></tr></table></div></td></tr><tr><td><div><li class="divider"></li></div></td></tr><tr><td><div><table><tr><td><div>Preface</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/00</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Introduction</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/01</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Python</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/02</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Overview</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/03</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>The Core</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/04</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>The Views</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/05</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Database</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/06</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Forms and Validators</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/07</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Email and SMS</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/08</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Access Control</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/09</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Services</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/10</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Ajax Recipes</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/11</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Components and Plugins</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/12</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Deployment Recipes</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/13</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Other Recipes</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/14</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Helping web2py</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/book/default/chapter/15</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Buy web2py\'s book</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://stores.lulu.com/web2py</div></td></tr></table></div></td></tr></table></div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Community</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>None</div></td></tr><tr><td><div><table><tr><td><div><table><tr><td><div>Groups</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://www.web2py.com/examples/default/usergroups</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Twitter</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://twitter.com/web2py</div></td></tr></table></div></td></tr><tr><td><div><table><tr><td><div>Live Chat</div></td></tr><tr><td><div>False</div></td></tr><tr><td><div>http://webchat.freenode.net/?channels=web2py</div></td></tr></table></div></td></tr></table></div></td></tr></table></div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">meta</td><td style="vertical-align:top;">:</td><td><div><table><tr><td style="font-weight:bold;vertical-align:top;">author</td><td style="vertical-align:top;">:</td><td><div>Your Name &lt;you@example.com&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">description</td><td style="vertical-align:top;">:</td><td><div>a cool new app</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">generator</td><td style="vertical-align:top;">:</td><td><div>Web2py Web Framework</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">keywords</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>web2py</div></td></tr><tr><td><div>python</div></td></tr><tr><td><div>framework</div></td></tr></table></div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">models_to_run</td><td style="vertical-align:top;">:</td><td><div><table><tr><td><div>^\\w+\\.py$</div></td></tr><tr><td><div>^default/\\w+\\.py$</div></td></tr><tr><td><div>^default/solution/\\w+\\.py$</div></td></tr></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">postprocessing</td><td style="vertical-align:top;">:</td><td><div><table></table></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_client</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_cookie_compression_level</td><td style="vertical-align:top;">:</td><td><div>None</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_cookie_expires</td><td style="vertical-align:top;">:</td><td><div>None</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_data_name</td><td style="vertical-align:top;">:</td><td><div>session_data_project0</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_file</td><td style="vertical-align:top;">:</td><td><div>&lt;open file &#x27;C:\\\\Users\\\\Aristos\\\\Downloads\\\\web2py_win\\\\web2py\\\\applications\\\\Project0\\\\sessions\\\\112\\\\0e7\\\\127.0.0.1-0b0488ee-4af9-4de1-9623-10e8dd0bb962&#x27;, mode &#x27;rb+&#x27; at 0x03D7C5F8&gt;</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_filename</td><td style="vertical-align:top;">:</td><td><div>C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\sessions\\127.0.0.1-0b0488ee-4af9-4de1-9623-10e8dd0bb962</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_hash</td><td style="vertical-align:top;">:</td><td><div>bc3af96caa43c9e775fa50659743d154</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_id</td><td style="vertical-align:top;">:</td><td><div>127.0.0.1-0b0488ee-4af9-4de1-9623-10e8dd0bb962</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_id_name</td><td style="vertical-align:top;">:</td><td><div>session_id_project0</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_locked</td><td style="vertical-align:top;">:</td><td><div>True</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_masterapp</td><td style="vertical-align:top;">:</td><td><div>Project0</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_new</td><td style="vertical-align:top;">:</td><td><div>False</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">session_storage_type</td><td style="vertical-align:top;">:</td><td><div>file</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">status</td><td style="vertical-align:top;">:</td><td><div>200</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">subtitle</td><td style="vertical-align:top;">:</td><td><div></div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">title</td><td style="vertical-align:top;">:</td><td><div>Project0</div></td></tr><tr><td style="font-weight:bold;vertical-align:top;">view</td><td style="vertical-align:top;">:</td><td><div>default/solution.html</div></td></tr></table></div>'
+tRp152
+sS'locals'
+p153
+(dp154
+S'CPLEX_DLL_load_dll'
+p155
+S'<function CPLEX_DLL_load_dll>'
+p156
+sS'OrderedDict'
+p157
+S"<class 'collections.OrderedDict'>"
+p158
+sS'LpStatusNotSolved'
+p159
+S'0'
+sS'EPS'
+p160
+S'1e-07'
+p161
+sS'subprocess'
+p162
+S"<module 'subprocess' from 'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\library.zip\\subprocess.pyc'>"
+p163
+sS'types'
+p164
+S"<module 'types' from 'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\library.zip\\types.pyc'>"
+p165
+sS'LpSenses'
+p166
+S"{-1: 'Maximize', 1: 'Minimize'}"
+p167
+sS'GLPK_CMD'
+p168
+S'<class pulp.solvers.GLPK_CMD>'
+p169
+sS'cplex_dll_path'
+p170
+S"'cplex100.dll'"
+p171
+sS'YAPOSIB'
+p172
+S'<class pulp.solvers.YAPOSIB>'
+p173
+sS'collections'
+p174
+S"<module 'collections' from 'C:\\Users\\Aristos\\Dow...s\\web2py_win\\web2py\\library.zip\\collections.pyc'>"
+p175
+sS'COIN_CMD'
+p176
+S'<class pulp.solvers.COIN_CMD>'
+p177
+sS'tests'
+p178
+S"<module 'pulp.tests' from 'C:\\Python27\\lib\\site-packages\\pulp\\tests.pyc'>"
+p179
+sS'random'
+p180
+S"<module 'random' from 'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\library.zip\\random.pyc'>"
+p181
+sS'string'
+p182
+S"<module 'string' from 'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\library.zip\\string.pyc'>"
+p183
+sS'combination'
+p184
+S'<function combination>'
+p185
+sS'VERSION'
+p186
+S"'1.6.5'"
+p187
+sS'amply'
+p188
+S"<module 'pulp.amply' from 'C:\\Python27\\lib\\site-packages\\pulp\\amply.pyc'>"
+p189
+sS'COIN'
+p190
+S'<class pulp.solvers.COIN_CMD>'
+p191
+sS'GLPK'
+p192
+S'<class pulp.solvers.GLPK_CMD>'
+p193
+sS'lpSum'
+p194
+S'<function lpSum>'
+p195
+sS'operating_system'
+p196
+S"'win'"
+p197
+sg142
+S'True'
+p198
+sS'pulpTestAll'
+p199
+S'<function pulpTestAll>'
+p200
+sS'sparse'
+p201
+S"<module 'pulp.sparse' from 'C:\\Python27\\lib\\site-packages\\pulp\\sparse.pyc'>"
+p202
+sS'probtype'
+p203
+S'-1'
+p204
+sS'DIRNAME'
+p205
+S"r'C:\\Python27\\lib\\site-packages\\pulp'"
+p206
+sS'Iterable'
+p207
+S"<class '_abcoll.Iterable'>"
+p208
+sS'constraints'
+p209
+S'4'
+sS'LpBinary'
+p210
+S"'Binary'"
+p211
+sS'PULPCFGFILE'
+p212
+S"'pulp.cfg.win'"
+p213
+sS'SCIP_CMD'
+p214
+S'<class pulp.solvers.SCIP_CMD>'
+p215
+sS'coinMP_path'
+p216
+S"[r'C:\\Python27\\lib\\site-packages\\pulp\\libCoinMP.so']"
+p217
+sS'mktemp'
+p218
+S'<function mktemp>'
+p219
+sS'PYGLPK'
+p220
+S'<class pulp.solvers.PYGLPK>'
+p221
+sS'clock'
+p222
+S'<built-in function clock>'
+p223
+sS'valueOrDefault'
+p224
+S'<function valueOrDefault>'
+p225
+sS'LpStatusInfeasible'
+p226
+S'-1'
+p227
+sS'cbc_path'
+p228
+S"'cbc'"
+p229
+sS'COINMP_DLL'
+p230
+S'<class pulp.solvers.COINMP_DLL>'
+p231
+sS'setConfigInformation'
+p232
+S'<function setConfigInformation>'
+p233
+sS'LpMinimize'
+p234
+S'1'
+sS'PulpError'
+p235
+S"<class 'pulp.constants.PulpError'>"
+p236
+sS'prob'
+p237
+S'Branch & Bound:\nMAXIMIZE\n19.0*x_1 + 27.0*x_2 + 2...LES\nx_1 Continuous\nx_2 Continuous\nx_3 Continuous\n'
+p238
+sS'math'
+p239
+S"<module 'math' (built-in)>"
+p240
+sS'GUROBI_CMD'
+p241
+S'<class pulp.solvers.GUROBI_CMD>'
+p242
+sS'gurobipy'
+p243
+S'None'
+p244
+sS'LpStatusUndefined'
+p245
+S'-3'
+p246
+sS'Tree'
+p247
+S"<class 'treelib.tree.Tree'>"
+p248
+sS'LpConstraintGE'
+p249
+S'1'
+sS'LpVariableDict'
+p250
+S"<class 'pulp.pulp.LpVariableDict'>"
+p251
+sS'ctypes'
+p252
+S"<module 'ctypes' from 'C:\\Users\\Aristos\\Download...b2py_win\\web2py\\library.zip\\ctypes\\__init__.pyc'>"
+p253
+sS'scip_path'
+p254
+S"'scip'"
+p255
+sS'initialize'
+p256
+S'<function initialize>'
+p257
+sS'COINMP_DLL_load_dll'
+p258
+S'<function COINMP_DLL_load_dll>'
+p259
+sS'pulp_cbc_path'
+p260
+S"r'C:\\Python27\\lib\\site-packages\\pulp\\solverdir\\cbc\\win\\32\\cbc.exe'"
+p261
+sS'logging'
+p262
+S"<module 'logging' from 'C:\\Users\\Aristos\\Downloa...2py_win\\web2py\\library.zip\\logging\\__init__.pyc'>"
+p263
+sS'FixedElasticSubProblem'
+p264
+S"<class 'pulp.pulp.FixedElasticSubProblem'>"
+p265
+sS'constraint'
+p266
+S'-3.0*x_1 + 4.0*x_2 + 2.0*x_3 + 0.0'
+p267
+sS'CPLEX'
+p268
+S'<class pulp.solvers.CPLEX_CMD>'
+p269
+sS'itertools'
+p270
+S"<module 'itertools' (built-in)>"
+p271
+sS'maketrans'
+p272
+S'<built-in function maketrans>'
+p273
+sS'permutation'
+p274
+S'<function permutation>'
+p275
+sS'os'
+p276
+S"<module 'os' from 'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\library.zip\\os.pyc'>"
+p277
+sS'config_filename'
+p278
+S"r'C:\\Python27\\lib\\site-packages\\pulp\\pulp.cfg.win'"
+p279
+sS'LpContinuous'
+p280
+S"'Continuous'"
+p281
+sS'lpDot'
+p282
+S'<function lpDot>'
+p283
+sS'glpk_path'
+p284
+S"'glpsol'"
+p285
+sS'variables'
+p286
+S'4'
+sS'LpMaximize'
+p287
+S'-1'
+p288
+sS'pulpDoctest'
+p289
+S'<function pulpDoctest>'
+p290
+sS'read_table'
+p291
+S'<function read_table>'
+p292
+sS'solvers'
+p293
+S"<module 'pulp.solvers' from 'C:\\Python27\\lib\\site-packages\\pulp\\solvers.pyc'>"
+p294
+sS'LpStatus'
+p295
+S"{-3: 'Undefined', -2: 'Unbounded', -1: 'Infeasible', 0: 'Not Solved', 1: 'Optimal'}"
+p296
+sS'variableslist'
+p297
+S'[x_1, x_2, x_3]'
+p298
+sS'allcombinations'
+p299
+S'<function allcombinations>'
+p300
+sS'Node'
+p301
+S"<class 'treelib.node.Node'>"
+p302
+sS'log'
+p303
+S'<logging.Logger object>'
+p304
+sS'FractionElasticSubProblem'
+p305
+S"<class 'pulp.pulp.FractionElasticSubProblem'>"
+p306
+sS'LpFractionConstraint'
+p307
+S"<class 'pulp.pulp.LpFractionConstraint'>"
+p308
+sS'LpCplexLPLineSize'
+p309
+S'78'
+p310
+sS'json'
+p311
+S"<module 'json' from 'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\library.zip\\json\\__init__.pyc'>"
+p312
+sS'glpk'
+p313
+S'None'
+p314
+sS'LpStatusOptimal'
+p315
+S'1'
+sS'is_64bits'
+p316
+S'False'
+p317
+sS'Amply'
+p318
+S"<class 'pulp.amply.Amply'>"
+p319
+sS'LpConstraintVar'
+p320
+S"<class 'pulp.pulp.LpConstraintVar'>"
+p321
+sS'CPLEX_CMD'
+p322
+S'<class pulp.solvers.CPLEX_CMD>'
+p323
+sS'isNumber'
+p324
+S'<function isNumber>'
+p325
+sS'LpConstraintEQ'
+p326
+S'0'
+sS'LpSolverDefault'
+p327
+S'<pulp.solvers.PULP_CBC_CMD instance>'
+p328
+sS'AmplyError'
+p329
+S"<class 'pulp.amply.AmplyError'>"
+p330
+sS'j'
+S'3'
+sS'tree'
+p331
+S'<treelib.tree.Tree object>'
+p332
+sS'value'
+p333
+S'<function value>'
+p334
+sS'v'
+S'x_1'
+p335
+sS'problem'
+p336
+S"{u'b_1': 7.0, u'b_2': 11.0, u'b_3': 5.0, u'c_1x_1': 4.0, u'c_1x_2': -3.0, u'c_1x_3': 1.0, u'c_2x_1': 2.0, u'c_2x_2': 1.0, u'c_2x_3': -2.0, u'c_3x_1': -3.0, ...}"
+p337
+sS'LpCategories'
+p338
+S"{'Binary': 'Binary', 'Continuous': 'Continuous', 'Integer': 'Integer'}"
+p339
+sS'pulp'
+p340
+S"<module 'pulp.pulp' from 'C:\\Python27\\lib\\site-packages\\pulp\\pulp.pyc'>"
+p341
+sS'LpConstraintLE'
+p342
+S'-1'
+p343
+sS'LpProblem'
+p344
+S"<class 'pulp.pulp.LpProblem'>"
+p345
+sS'makeDict'
+p346
+S'<function makeDict>'
+p347
+sS'XPRESS'
+p348
+S'<class pulp.solvers.XPRESS>'
+p349
+sS'LpSolver'
+p350
+S'<class pulp.solvers.LpSolver>'
+p351
+sS'yaposib'
+p352
+S'None'
+p353
+sS'LpSolver_CMD'
+p354
+S'<class pulp.solvers.LpSolver_CMD>'
+p355
+sS'LpInteger'
+p356
+S"'Integer'"
+p357
+sS'configparser'
+p358
+S"<module 'ConfigParser' from 'C:\\Users\\Aristos\\Do...\\web2py_win\\web2py\\library.zip\\ConfigParser.pyc'>"
+p359
+sS'PulpSolverError'
+p360
+S"<class 'pulp.solvers.PulpSolverError'>"
+p361
+sS'node_list'
+p362
+S'[]'
+p363
+sS'LpStatusUnbounded'
+p364
+S'-2'
+p365
+sS'GUROBI'
+p366
+S'<class pulp.solvers.GUROBI>'
+p367
+sS'LpConstraint'
+p368
+S"<class 'pulp.pulp.LpConstraint'>"
+p369
+sS'LpConstraintSenses'
+p370
+S"{-1: '<=', 0: '=', 1: '>='}"
+p371
+sS'GurobiFormulation'
+p372
+S"<class 'pulp.solvers.GurobiFormulation'>"
+p373
+sS'objective'
+p374
+S'19.0*x_1 + 27.0*x_2 + 23.0*x_3 + 0.0'
+p375
+sS'gurobi_path'
+p376
+S"r'C:\\gurobi10\\win32\\python2.5\\lib'"
+p377
+sS'ctypesArrayFill'
+p378
+S'<function ctypesArrayFill>'
+p379
+sS'Result'
+p380
+S"{'obj': 223.1111114, 'vars': {'x_1': 'x_1=4.5555556'}}"
+p381
+sS'non_int_variables'
+p382
+S'[]'
+p383
+sS'LpVariable'
+p384
+S"<class 'pulp.pulp.LpVariable'>"
+p385
+sS'warnings'
+p386
+S"<module 'warnings' from 'C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\library.zip\\warnings.pyc'>"
+p387
+sS'best_node'
+p388
+S"{'limit': -inf, 'node': 'none'}"
+p389
+sS'allpermutations'
+p390
+S'<function allpermutations>'
+p391
+sS'sys'
+p392
+S"<module 'sys' (built-in)>"
+p393
+sS'isiterable'
+p394
+S'<function isiterable>'
+p395
+sS'LpAffineExpression'
+p396
+S"<class 'pulp.pulp.LpAffineExpression'>"
+p397
+sS'CPLEX_DLL'
+p398
+S'<class pulp.solvers.CPLEX_DLL>'
+p399
+sS'arch'
+p400
+S"'32'"
+p401
+sS'ilm_cplex_license_signature'
+p402
+S'0'
+sS'constants'
+p403
+S"<module 'pulp.constants' from 'C:\\Python27\\lib\\site-packages\\pulp\\constants.pyc'>"
+p404
+sS'SCIP'
+p405
+S'<class pulp.solvers.SCIP_CMD>'
+p406
+sS'configSolvers'
+p407
+S'<function configSolvers>'
+p408
+sS'i'
+S'3'
+sS'PULP_CBC_CMD'
+p409
+S'<class pulp.solvers.PULP_CBC_CMD>'
+p410
+sS'LpElement'
+p411
+S"<class 'pulp.pulp.LpElement'>"
+p412
+sS'splitDict'
+p413
+S'<function splitDict>'
+p414
+sS'ilm_cplex_license'
+p415
+S"'LICENSE your-enterprise\\nRUNTIME NEVER ...'"
+p416
+sS'CPLEX_PY'
+p417
+S'<class pulp.solvers.CPLEX_PY>'
+p418
+sssS'traceback'
+p419
+S'Traceback (most recent call last):\n  File "C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\gluon\\restricted.py", line 227, in restricted\n    exec ccode in environment\n  File "C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\controllers/default.py", line 229, in <module>\n  File "C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\gluon\\globals.py", line 417, in <lambda>\n    self._caller = lambda f: f()\n  File "C:\\Users\\Aristos\\Downloads\\web2py_win\\web2py\\applications\\Project0\\controllers/default.py", line 109, in solution\n    if not Result[\'vars\'][v.name].is_integer():\nAttributeError: \'str\' object has no attribute \'is_integer\'\n'
+p420
+s.
