@@ -125,7 +125,7 @@ def solution():
         node_list.remove(branch_node) # And then we remove it from the nodes to be examined
         non_integer_variables=tree.get_node('{node}'.format(node=branch_node)).data['non_int'] # we get the non_integer variables from the node
         branch_variable=random.choice(non_integer_variables) # And then we randomly select which of them to cut for branch and bound
-        down=int(tree.get_node('{node}'.format(node=branch_node)).data['result'][branch_variable])
+        down=int(tree.get_node('{node}'.format(node=branch_node)).data['result'][branch_variable]) #up and down limits for the new constraint
         up=math.ceil(tree.get_node('{node}'.format(node=branch_node)).data['result'][branch_variable])
         temp=tree.get_node('{node}'.format(node=branch_node)).data['problem'].copy() # We take the node problem and we create the new one with the new constraint
         var_index=int(branch_variable.split('_')[1])-1
