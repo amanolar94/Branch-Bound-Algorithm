@@ -131,11 +131,11 @@ def solution():
         var_index=int(branch_variable.split('_')[1])-1
         temp+=variableslist[var_index]<=down
         new_constraint='{x}<={bs}'.format(x=variableslist[var_index],bs=down)
-        temp.solve()
+        temp.solve() #we solve the new problem
         Result={}
         Result['vars']={}
         non_int_variables=[]
-        if LpStatus[temp.status]=='Optimal':
+        if LpStatus[temp.status]=='Optimal': #we check if problem is Optimal
             Result['obj']=value(temp.objective)
             for v in temp.variables():
                 Result['vars'][v.name]='{var}={value}'.format(var=v.name,value=v.varValue)
