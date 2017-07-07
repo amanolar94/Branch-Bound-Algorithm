@@ -55,6 +55,6 @@ box-shadow: 5px 5px 5px #888888;
 border-radius: 5px;
 }
 .best{
-	background-color: green;
-	border: none;
+	background: -webkit-gradient(linear, left top, left bottom, from(#3ea546), to(#68ff73)); 
+	border: 1px solid #68ff73;
 }
