@@ -90,7 +90,7 @@ def solution():
             prob+= constraint >= problem['b_{con}'.format(con=i)]
         else:
             prob+= constraint == problem['b_{con}'.format(con=i)]
-    prob.solve()
+    prob.solve() #Solve initial LP
     if LpStatus[prob.status]!='Optimal': #if solution is not optimal we are done. It is either "Not Solved" or "Infeasible" or "Unbounded" or "Undefined"
         return dict(result=LpStatus[prob.status],example='none',variables=variables-1)
     # We create the tree for the branch and bound
