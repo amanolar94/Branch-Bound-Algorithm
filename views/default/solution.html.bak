@@ -18,7 +18,6 @@
 		google.charts.load('current', {packages:["orgchart"]});
       	google.charts.setOnLoadCallback(drawChart);
 
-
       function drawChart() {
         var data = new google.visualization.DataTable();
         data.addColumn('string', 'Name');
@@ -34,21 +33,20 @@
         // data.setRowProperty(7, 'style', 'border: 1px solid green');
         // console.log(data.qg[0]['c'][0]['v'])
         var best_node='{{=XML(best_node)}}';
+         console.log(data)
         for (i = 0; i < data.og.length; i++) { 
-		    if (data.og[i]['c'][0]['v']==best_node){
+		    if (data.qg[i]['c'][0]['v']==best_node){
 		    	data.setRowProperty(i, 'style', 'background: -webkit-gradient(linear, left top, left bottom, from(#3ea546), to(#68ff73)); border: 1px solid #68ff73;');
 		    }
 		}
-			$( ".node" ).css( "background", "red" );
-
 		if(variablesno==2){
-			chart.draw(data, {size:'large',allowHtml:true,selectedNodeClass:'best',nodeClass:'node'});
+			chart.draw(data, {size:'large',allowHtml:true});
 
 		}else if(variablesno<=5){
-			chart.draw(data, {size:'medium',allowHtml:true,selectedNodeClass:'best',nodeClass:'node'});
+			chart.draw(data, {size:'medium',allowHtml:true});
 
 		}else{
-			chart.draw(data, {size:'small',allowHtml:true,selectedNodeClass:'best',nodeClass:'node'});
+			chart.draw(data, {size:'small',allowHtml:true});
 		}
         
       }
@@ -56,10 +54,5 @@
 
 	}else{
 		$('#chart_div').append('<h1>'+result+' problem</h1>');
-	};
-
-
-
-	
+	}
          </script>
-         

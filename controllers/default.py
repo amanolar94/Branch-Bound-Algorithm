@@ -92,7 +92,7 @@ def solution():
             prob+= constraint == problem['b_{con}'.format(con=i)]
     prob.solve()
     if LpStatus[prob.status]!='Optimal': #if solution is not optimal we are done. It is either "Not Solved" or "Infeasible" or "Unbounded" or "Undefined"
-        return dict(result=LpStatus[prob.status],example='none',best_node='none',variables=variables-1)
+        return dict(result=LpStatus[prob.status],example='none',variables=variables-1)
     # We create the tree for the branch and bound
     tree=Tree()
     Result={} #result of the problem
@@ -222,11 +222,14 @@ def solution():
             if node_list[node].data['result']['obj'] == 'Infeasible': 
                 temp_list=[{'v':node_list[node].identifier,'f':'<div style="font-size:0.8em">{new}</div>{obj}'.format(new=node_list[node].data['new_constraint'],obj=node_list[node].data['result']['obj'])},tree.parent(node_list[node].identifier).identifier,'']
             else:
-                temp_list=[{'v':node_list[node].identifier,'f':'<div style="font-size:0.8em">{new}</div>z={obj}<div style="color:red; font-style:italic">{vars}</div>'.format(new=node_list[node].data['new_constraint'],obj=node_list[node].data['result']['obj'], vars=str(node_list[node].data['result']['vars'].values()))},tree.parent(node_list[node].identifier).identifier,'']
+                if node_list[node].identifier==best_node['node']:
+                    temp_list=[{'v':node_list[node].identifier,'f':'<div class="best"> <div style="font-size:0.8em">{new}</div>z={obj}<div style="color:red; font-style:italic">{vars}</div></div>'.format(new=node_list[node].data['new_constraint'],obj=node_list[node].data['result']['obj'], vars=str(node_list[node].data['result']['vars'].values()))},tree.parent(node_list[node].identifier).identifier,'']
+                else:
+                    temp_list=[{'v':node_list[node].identifier,'f':'<div style="font-size:0.8em">{new}</div>z={obj}<div style="color:red; font-style:italic">{vars}</div>'.format(new=node_list[node].data['new_constraint'],obj=node_list[node].data['result']['obj'], vars=str(node_list[node].data['result']['vars'].values()))},tree.parent(node_list[node].identifier).identifier,'']
 
         else:
             temp_list=[{'v':node_list[node].identifier,'f':'z={obj}<div style="color:red; font-style:italic">{vars}</div>'.format(obj=node_list[node].data['result']['obj'],vars=str(node_list[node].data['result']['vars'].values()))},'','']
         tree_data.append(temp_list)
     
-    return dict(result='Feasible',example=tree_data,best_node=best_node['node'],variables=variables-1)
+    return dict(result='Feasible',example=tree_data,variables=variables-1)
 
