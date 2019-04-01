@@ -121,7 +121,7 @@ def solution():
     while node_list:
         #for every node that we examine we create 2 new nodes based on the two new constraints that we inserted each for a the new problem
         solution=True
-        branch_node=node_list[0] # We select the last inserted node for branching. We use the FIFO method for selecting the node.
+        branch_node=node_list[0] # We select the last inserted node for branching. We use the LIFO method for selecting the node.
         node_list.remove(branch_node) # And then we remove it from the nodes to be examined
         non_integer_variables=tree.get_node('{node}'.format(node=branch_node)).data['non_int'] # we get the non_integer variables from the node
         branch_variable=random.choice(non_integer_variables) # And then we randomly select which of them to cut for branch and bound
